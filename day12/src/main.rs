@@ -1,160 +1,132 @@
-use std::collections::VecDeque;
+use core::fmt;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
-struct Node {
-    is_start: bool,
-    is_end: bool,
-    elevation: char,
+#[derive(Debug, Clone, Copy)]
+enum Cell {
+    Start,
+    End,
+    Square(u8),
 }
 
-impl Node {
-    fn new(input: char) -> Node {
-        let mut is_start = false;
-        let mut is_end = false;
-        let mut elevation = input;
-        if elevation == 'S' {
-            is_start = true;
-            elevation = 'a';
-        } else if elevation == 'a' {
-            is_start = true;
-        } else if elevation == 'E' {
-            is_end = true;
-            elevation = 'z';
+impl Cell {
+    fn elevation(self) -> u8 {
+        match self {
+            Cell::Start => 0,
+            Cell::End => 25,
+            Cell::Square(v) => v,
         }
-        Node {
-            is_start: is_start,
-            is_end: is_end,
-            elevation: elevation,
-        }
-    }
-
-    fn is_start_node(&self) -> bool {
-        self.is_start
-    }
-
-    fn is_end_node(&self) -> bool {
-        self.is_end
-    }
-
-    fn can_move_to(&self, other: &Node) -> bool {
-        let diff: i32 = (other.elevation as u8) as i32 - (self.elevation as u8) as i32;
-        diff <= 1
     }
 }
 
-fn part1() {
-    let mut grid: Vec<Vec<Node>> = vec![];
-    let mut start_xy = (0, 0);
-    let mut end_xy = (0, 0);
-    let mut row = 0;
-    for line in include_str!("input.txt").lines() {
-        let mut row_nodes = vec![];
-        let mut col = 0;
-        for v in line.chars() {
-            let n = Node::new(v);
-            row_nodes.push(n.clone());
-            if n.is_start_node() {
-                start_xy = (row, col);
-            } else if n.is_end_node() {
-                end_xy = (row, col);
-            }
-            col += 1;
+struct GridCoord {
+    x: usize,
+    y: usize,
+}
+
+impl From<(usize, usize)> for GridCoord {
+    fn from((x, y): (usize, usize)) -> Self {
+        Self { x, y }
+    }
+}
+
+struct CellRecord {
+    prev: Option<GridCoord>,
+}
+
+struct Grid {
+    width: usize,
+    height: usize,
+    data: Vec<Cell>,
+    visited: HashMap<GridCoord, CellRecord>,
+    current: HashMap<GridCoord, CellRecord>,
+    num_steps: usize,
+}
+
+impl Grid {
+    fn parse(input: &str) -> Self {
+        let width = input.lines().next().unwrap().len();
+        let height = input.lines().count();
+        let mut data = vec![];
+
+        for c in input.chars() {
+            let cell = match c {
+                'S' => Cell::Start,
+                'E' => Cell::End,
+                'a'..='z' => Cell::Square(c as u8 - 'a' as u8),
+                '\n' => continue,
+                _ => panic!("Not valid"),
+            };
+            data.push(cell);
         }
-        grid.push(row_nodes);
-        row += 1;
+
+        Self {
+            width,
+            height,
+            data,
+            current: Default::default(),
+            visited: Default::default(),
+            num_steps: 0,
+        }
     }
 
-    let mut visited: Vec<Vec<i32>> = vec![vec![-1; grid[0].len()]; grid.len()];
-    let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
-    queue.push_back(start_xy);
-    visited[start_xy.0][start_xy.1] = 0;
-
-    while queue.len() > 0 {
-        let current_xy = queue.pop_front().unwrap();
-        let current_node = grid[current_xy.0][current_xy.1].clone();
-        if current_node.is_end_node() {
-            break;
-        }
-        let dx: [i32; 4] = [0, 0, -1, 1];
-        let dy: [i32; 4] = [-1, 1, 0, 0];
-        for i in 0..4 {
-            let nx = current_xy.0 as i32 + dx[i];
-            let ny = current_xy.1 as i32 + dy[i];
-            if nx < 0 || nx >= grid.len() as i32 || ny < 0 || ny >= grid[0].len() as i32 {
-                continue;
-            }
-            if visited[nx as usize][ny as usize] != -1 {
-                continue;
-            }
-            if current_node.can_move_to(&grid[nx as usize][ny as usize]) {
-                visited[nx as usize][ny as usize] = visited[current_xy.0][current_xy.1] + 1;
-                queue.push_back((nx as usize, ny as usize));
-            }
-            println!("{:?}", queue);
-        }
+    fn in_bounds(&self, coord: &GridCoord) -> bool {
+        return coord.x < self.height && coord.y < self.width;
     }
-    println!("{:?}", start_xy);
-    println!("{:?}", visited[start_xy.0][start_xy.1]);
-    println!("{:?}", end_xy);
-    println!("{:?}", visited[end_xy.0][end_xy.1]);
+
+    fn cell(&self, coord: &GridCoord) -> Option<&Cell> {
+        if !self.in_bounds(coord) {
+            return None;
+        }
+        let idx = coord.x * self.width + coord.y;
+        Some(&self.data[idx])
+    }
+
+    fn cell_mut(&mut self, coord: &GridCoord) -> Option<&mut Cell> {
+        if !self.in_bounds(coord) {
+            return None;
+        }
+        let idx = coord.x * self.width + coord.y;
+        Some(&mut self.data[idx])
+    }
+
+    fn reachable_neighbours<'a>(
+        &'a self,
+        coord: &'a GridCoord,
+    ) -> impl Iterator<Item = GridCoord> + 'a {
+        let current_elev = self.cell(coord).unwrap().elevation();
+        let delta: [(isize, isize); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+        delta.into_iter().filter_map(move |(dx, dy)| {
+            Some(GridCoord {
+                x: coord.x.checked_add_signed(dx)?,
+                y: coord.y.checked_add_signed(dy)?,
+            })
+            .filter(|coord| self.in_bounds(coord))
+            .filter(|coord| self.cell(coord).unwrap().elevation() <= current_elev + 1)
+        })
+    }
+}
+
+impl fmt::Debug for Grid {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(fmt, "{}x{} grid", self.height, self.width)?;
+        for i in 0..self.height {
+            for j in 0..self.width {
+                let cell = self.cell(&(i, j).into()).unwrap();
+                match cell {
+                    Cell::Start => write!(fmt, "S")?,
+                    Cell::End => write!(fmt, "E")?,
+                    Cell::Square(c) => write!(fmt, "{}", (b'a' + c) as char)?,
+                };
+            }
+            writeln!(fmt, "")?;
+        }
+        Ok(())
+    }
 }
 
 fn main() {
-    let mut grid: Vec<Vec<Node>> = vec![];
-    let mut start_xys: Vec<(usize, usize)> = vec![];
-    let mut end_xy = (0, 0);
-    let mut row = 0;
-    for line in include_str!("input.txt").lines() {
-        let mut row_nodes = vec![];
-        let mut col = 0;
-        for v in line.chars() {
-            let n = Node::new(v);
-            row_nodes.push(n.clone());
-            if n.is_start_node() {
-                start_xys.push((row, col));
-            } else if n.is_end_node() {
-                end_xy = (row, col);
-            }
-            col += 1;
-        }
-        grid.push(row_nodes);
-        row += 1;
-    }
-
-    let mut steps: Vec<i32> = vec![];
-    for start_xy in start_xys.iter() {
-        let mut visited: Vec<Vec<i32>> = vec![vec![-1; grid[0].len()]; grid.len()];
-        let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
-        queue.push_back(*start_xy);
-        visited[start_xy.0][start_xy.1] = 0;
-
-        while queue.len() > 0 {
-            let current_xy = queue.pop_front().unwrap();
-            let current_node = grid[current_xy.0][current_xy.1].clone();
-            if current_node.is_end_node() {
-                break;
-            }
-            let dx: [i32; 4] = [0, 0, -1, 1];
-            let dy: [i32; 4] = [-1, 1, 0, 0];
-            for i in 0..4 {
-                let nx = current_xy.0 as i32 + dx[i];
-                let ny = current_xy.1 as i32 + dy[i];
-                if nx < 0 || nx >= grid.len() as i32 || ny < 0 || ny >= grid[0].len() as i32 {
-                    continue;
-                }
-                if visited[nx as usize][ny as usize] != -1 {
-                    continue;
-                }
-                if current_node.can_move_to(&grid[nx as usize][ny as usize]) {
-                    visited[nx as usize][ny as usize] = visited[current_xy.0][current_xy.1] + 1;
-                    queue.push_back((nx as usize, ny as usize));
-                }
-            }
-        }
-        steps.push(visited[end_xy.0][end_xy.1]);
-    }
-    println!(
-        "{:?}",
-        steps.into_iter().filter(|&x| x != -1).min().unwrap()
-    );
+    let input = include_str!("test.txt");
+    let grid = Grid::parse(input);
+    println!("{:?}", grid.data);
+    print!("{:?}", grid);
 }
